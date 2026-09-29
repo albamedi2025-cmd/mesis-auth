@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MESIS Auth</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+body{font-family:system-ui,sans-serif;max-width:680px;margin:40px auto;padding:20px}
+input,button{font-size:18px;padding:12px;margin:6px 0;width:100%;box-sizing:border-box}
+button{cursor:pointer}
+.box{border:1px solid #ccc;border-radius:12px;padding:18px;margin:16px 0}
+#status{white-space:pre-wrap}
+</style>
+</head>
+<body>
+
+<h1>MESIS Auth</h1>
+
+<div class="box" id="recoveryBox" style="display:none">
+<h2>Set new password</h2>
+<input id="newPassword" type="password" placeholder="New password">
+<input id="confirmPassword" type="password" placeholder="Confirm password">
+<button id="resetBtn">Set password</button>
+</div>
+
+<div class="box">
+<h2>Sign in</h2>
+<input id="email" type="email" value="albamedi2025@gmail.com" placeholder="Email">
+<input id="password" type="password" placeholder="Password">
+<button id="signInBtn">Sign in</button>
+</div>
+
+<div class="box">
+<h2>MESIS Knowledge Gate</h2>
+<p id="userInfo">Not signed in.</p>
+<button id="authorizeBtn" disabled>Authorize test proposal</button>
+</div>
+
+<div class="box">
+<strong>Status</strong>
+<div id="status">Ready.</div>
+</div>
+
+<script>
+const SUPABASE_URL='https://unybyiakogriyrxyqtay.supabase.co';
+const SUPABASE_KEY='sb_publishable_w96chR4FMcrDt53qWwaURQ_cN0M6kwd';
+const PROPOSAL_ID='8fa253ad-be4b-467d-a428-a164d2b17199';
+
+const {createClient}=supabase;
+const client=createClient(SUPABASE_URL,SUPABASE_KEY);
+
+const statusEl=document.getElementById('status');
+
+function status(x){
+  statusEl.textContent=x;
+}
+
+async function refresh(){
+  const {data:{session}}=await client.auth.getSession();
+
+  if(!session){
+    document.getElementById('userInfo').textContent='Not signed in.';
+    document.getElementById('authorizeBtn').disabled=true;
+    return;
+  }
+
+  const {data:aal}=await client.auth.mfa.getAuthenticatorAssuranceLevel();
+  const user=session.user;
+  const level=aal?.currentLevel||session.user.aal||'unknown';
+
+  document.getElementById('userInfo').textContent=
+    `Signed in\nUser: ${user.id}\nAAL: ${level}`;
+
+  document.getElementById('authorizeBtn').disabled=level!=='aal2';
+}
+
+client.auth.onAuthStateChange(()=>refresh());
+
+(async()=>{
+  const {data:{session}}=await client.auth.getSession();
+
+  if(session && location.hash.includes('type=recovery')){
+    document.getElementById('recoveryBox').style.display='block';
+  }
+
+  await refresh();
+})();
+
+document.getElementById('resetBtn').onclick=async()=>{
+  const p=document.getElementById('newPassword').value;
+  const c=document.getElementById('confirmPassword').value;
+
+  if(p.length<8)
+    return status('Password must be at least 8 characters.');
+
+  if(p!==c)
+    return status('Passwords do not match.');
+
+  const {error}=await client.auth.updateUser({password:p});
+
+  if(error)
+    return status('Password update failed: '+error.message);
+
+  history.replaceState({},document.title,location.pathname+location.search);
+
+  document.getElementById('recoveryBox').style.display='none';
+
+  status('Password updated. You can now sign in.');
+
+  await client.auth.signOut();
+  await refresh();
+};
+
+document.getElementById('signInBtn').onclick=async()=>{
+  const {data,error}=await client.auth.signInWithPassword({
+    email:document.getElementById('email').value,
+    password:document.getElementById('password').value
+  });
+
+  if(error)
+    return status('Sign-in failed: '+error.message);
+
+  status('Signed in.');
+  await refresh();
+};
+
+document.getElementById('authorizeBtn').onclick=async()=>{
+  const {data:{session}}=await client.auth.getSession();
+
+  if(!session)
+    return status('No authenticated session.');
+
+  const {data,error}=await client
+    .schema('mesis_gate')
+    .rpc('authorize_authenticated_human',{
+      p_proposal_id:PROPOSAL_ID,
+      p_evidence:{
+        test:'MESIS controlled Knowledge Gate test',
+        no_real_world_execution:true
+      },
+      p_rationale:'Controlled authorization test after authenticated human sign-in',
+      p_expires_at:null
+    });
+
+  if(error)
+    return status('Authorization blocked: '+error.message);
+
+  status(
+    'Authorization accepted by Knowledge Gate.\n'+
+    JSON.stringify(data,null,2)
+  );
+};
+</script>
+
+</body>
+</html>
